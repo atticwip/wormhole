@@ -29,6 +29,10 @@ var (
 	GanacheExampleERC20Token        = common.HexToAddress("0xCfEB869F69431e42cdB54A4F4f105C19C080A601")
 	GanacheExampleERC20WrappedSOL   = common.HexToAddress("0xf5b1d8fab1054b9cf7db274126972f97f9d42a11")
 	GanacheExampleERC20WrappedTerra = common.HexToAddress("0x62b47a23cd900da982bdbe75aeb891d3ed18cc36")
+
+	QtumJanusRPCURL                 = "http://localhost:23889"
+	QtumClientMinerAddress          = common.HexToAddress("0x7926223070547d2d15b2ef5e7383e541c338ffe9")
+	QtumClientDefaultAccountAddress = common.HexToAddress("0x2352be3db3177f0a07efbe6da5857615b8c9901d")
 )
 
 const (
@@ -63,6 +67,9 @@ const (
 	// ERC20 default precision.
 	ERC20DefaultPrecision = 1e18
 
+	// QRC20 default precision.
+	QTUMDefaultPrecision = 1e8
+
 	// CW20 default precision.
 	TerraDefaultPrecision = 1e8
 
@@ -84,6 +91,9 @@ const (
 
 	// Terra devnet fee payer mnemonic
 	TerraFeePayerKey = "notice oak worry limit wrap speak medal online prefer cluster roof addict wrist behave treat actual wasp year salad speed social layer crew genius"
+
+	//Qtum wif key
+	QtumFeePayerKey = "cRcG1jizfBzHxfwu68aMjhy78CpnzD9gJYZ5ggDbzfYD3EQfGUDZ"
 )
 
 func DeriveAccount(accountIndex uint) accounts.Account {

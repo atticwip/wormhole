@@ -1,0 +1,90 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qtum-devnet
+  labels:
+    app: qtum-devnet
+spec:
+  ports:
+    - port: 8545
+      name: rpc
+      protocol: TCP
+  clusterIP: None
+  selector:
+    app: qtum-devnet
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qtum-devnet
+spec:
+  selector:
+    matchLabels:
+      app: qtum-devnet
+  serviceName: qtum-devnet
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: qtum-devnet
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: qtum-testchain
+          image: qtum/qtum
+          command:
+            - qtumd
+            - -regtest
+            - -txindex
+            - -addrindex=1
+            - -rpcbind=0.0.0.0:3889
+            - -rpcallowip=0.0.0.0/0
+            - -logevents=1
+            - -rpcuser=qtum
+            - -rpcpassword=testpasswd
+            - -deprecatedrpc=accounts
+#            - -printtoconsole
+          ports:
+            - containerPort: 3889
+              name: rpc
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: rpc
+        - name: janus
+          image: messer4/janus:dev
+          command:
+            - janus
+            - --bind
+            - 0.0.0.0
+#            - --dev
+            - --accounts
+            - /go/src/github.com/qtumproject/janus/myaccounts.txt
+          environment:
+            - QTUM_RPC=http://qtum:testpasswd@127.0.0.1:3889
+            - GENERATE_TO_ADDRESS=cMbgxCJrTYUqgcmiC1berh5DFrtY1KeU4PXZ6NZxgenniF1mXCRk
+          ports:
+            - containerPort: 23889
+              name: rpc
+              protocol: TCP
+          depends_on:
+            - qtum
+          readinessProbe:
+            tcpSocket:
+              port: rpc
+        - name: tests
+          image: qtum-contract
+          command:
+            - /home/node/app/devnet_setup.sh
+          startupProbe:
+            periodSeconds: 1
+            failureThreshold: 60
+            tcpSocket:
+              port: 2000
+        - name: mine
+          image: qtum-contract
+          command:
+            - /bin/sh
+            - -c
+            - "npx truffle exec mine.js"

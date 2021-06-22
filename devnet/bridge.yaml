@@ -91,6 +91,18 @@ spec:
             - "[::]:7070"
             - --adminSocket
             - /tmp/admin.sock
+            - --qtum
+            - --qtumRPC
+            - http://qtum:testpasswd@qtum-devnet:3889
+            - --qtumContract
+            -
+            - --qtumConfirmations
+            # For tests used 1 confirmation
+            - '1'
+            - --qtumKey
+            - /tmp/qtum.key
+            - --qtumChainID
+            - 'regtest'
 #            - --logLevel=debug
           securityContext:
             capabilities:

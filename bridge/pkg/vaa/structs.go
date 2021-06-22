@@ -106,6 +106,8 @@ func (c ChainID) String() string {
 		return "ethereum"
 	case ChainIDTerra:
 		return "terra"
+	case ChainIDQtum:
+		return "qtum"
 	default:
 		return fmt.Sprintf("unknown chain ID: %d", c)
 	}
@@ -122,6 +124,8 @@ const (
 	ChainIDEthereum = 2
 	// ChainIDTerra is the ChainID of Terra
 	ChainIDTerra = 3
+	// ChainIDQtum is the ChainID of Qtum
+	ChainIDQtum = 4
 
 	minVAALength        = 1 + 4 + 52 + 4 + 1 + 1
 	SupportedVAAVersion = 0x01

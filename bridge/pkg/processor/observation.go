@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	bridge_common "github.com/certusone/wormhole/bridge/pkg/common"
-	"github.com/prometheus/client_golang/prometheus"
 	"strings"
 	"time"
+
+	bridge_common "github.com/certusone/wormhole/bridge/pkg/common"
+	"github.com/certusone/wormhole/bridge/pkg/qtum"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/certusone/wormhole/bridge/pkg/terra"
 
@@ -254,6 +256,8 @@ func (p *Processor) handleObservation(ctx context.Context, m *gossipv1.SignedObs
 					p.devnetVAASubmission(ctx, signed, hash)
 				case vaa.ChainIDTerra:
 					go p.terraVAASubmission(ctx, signed, hash)
+				case vaa.ChainIDQtum:
+					go p.qtumVAASubmission(ctx, signed, hash)
 				default:
 					p.logger.Error("unknown target chain ID",
 						zap.String("digest", hash),
@@ -267,6 +271,7 @@ func (p *Processor) handleObservation(ctx context.Context, m *gossipv1.SignedObs
 				// A guardian set update is broadcast to every chain that we talk to.
 				p.devnetVAASubmission(ctx, signed, hash)
 				p.terraVAASubmission(ctx, signed, hash)
+				p.qtumVAASubmission(ctx, signed, hash)
 			case *vaa.BodyContractUpgrade:
 				p.state.vaaSignatures[hash].source = "contract_upgrade"
 
@@ -346,4 +351,30 @@ func (p *Processor) terraVAASubmission(ctx context.Context, signed *vaa.VAA, has
 
 	observationsDirectSubmissionSuccessTotal.WithLabelValues("terra").Inc()
 	p.logger.Info("VAA submitted to Terra", zap.Any("tx", tx), zap.String("digest", hash))
+}
+
+// Submit VAA to Qtum.
+func (p *Processor) qtumVAASubmission(ctx context.Context, signed *vaa.VAA, hash string) {
+	if !p.devnetMode || !p.qtumEnabled {
+		p.logger.Warn("ignoring qtum VAA submission",
+			zap.String("digest", hash))
+		return
+	}
+
+	observationsDirectSubmissionsTotal.WithLabelValues("qtum").Inc()
+
+	tx, err := qtum.SubmitVAA(ctx, p.qtumRPC, p.qtumChainID, p.qtumContract, p.qtumFeePayer, signed)
+	if err != nil {
+		if strings.Contains(err.Error(), "VaaAlreadyExecuted") {
+			p.logger.Info("VAA already submitted to Qtum by another node, ignoring",
+				zap.Error(err), zap.String("digest", hash))
+		} else {
+			p.logger.Error("failed to submit VAA to Qtum",
+				zap.Error(err), zap.String("digest", hash))
+		}
+		return
+	}
+
+	observationsDirectSubmissionSuccessTotal.WithLabelValues("qtum").Inc()
+	p.logger.Info("VAA submitted to Qtum", zap.Any("tx", tx), zap.String("digest", hash))
 }

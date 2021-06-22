@@ -154,6 +154,33 @@ k8s_resource("eth-devnet", port_forwards=[
     port_forward(8545, name="Ganache RPC [:8545]")
 ])
 
+# qtum devnet
+
+docker_build(
+    ref = "qtum-contract",
+    context = "./qtum",
+    dockerfile = "./qtum/Dockerfile",
+
+    # ignore local node_modules (in case they're present)
+    ignore = ["./qtum/node_modules"],
+
+    # sync external scripts for incremental development
+    # (everything else needs to be restarted from scratch for determinism)
+    #
+    # This relies on --update-mode=exec to work properly with a non-root user.
+    # https://github.com/tilt-dev/tilt/issues/3708
+    live_update = [
+        sync("./qtum/src", "/home/node/app/src"),
+    ],
+)
+
+k8s_yaml_with_ns("devnet/qtum-devnet.yaml")
+
+k8s_resource("qtum-devnet", port_forwards=[
+    port_forward(3889, name="Qtum Regtest RPC [:3889]"),
+    port_forward(23889, name="Janus [:23889]"),
+])
+
 # web frontend
 
 docker_build(

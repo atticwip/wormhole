@@ -14,6 +14,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/deckarep/golang-set v1.7.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v3 v3.0.0
 	github.com/dfuse-io/logging v0.0.0-20210109005628-b97a57253f70 // indirect
 	github.com/dfuse-io/solana-go v0.2.1-0.20210119190242-57bebed0dae0
 	github.com/ethereum/go-ethereum v1.9.25
@@ -54,7 +55,10 @@ require (
 	github.com/peterh/liner v1.2.1 // indirect
 	github.com/prometheus/client_golang v1.9.0
 	github.com/prometheus/tsdb v0.10.0 // indirect
+	github.com/qtumproject/janus v0.0.0-20210506200515-c6b1e43c1e45
+	github.com/qtumproject/qtumsuite v0.0.0-20191105052314-80f1a6a75e13
 	github.com/shirou/gopsutil v2.20.9+incompatible // indirect
+	github.com/shopspring/decimal v1.2.0
 	github.com/spf13/cast v1.3.1 // indirect
 	github.com/spf13/cobra v1.1.1
 	github.com/spf13/viper v1.7.1
@@ -71,8 +75,7 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
-	golang.org/x/net v0.0.0-20210119194325-5f4716e94777 // indirect
-	golang.org/x/sys v0.0.0-20210119212857-b64e53b001e4
+	golang.org/x/sys v0.0.0-20210225134936-a50acf3fe073
 	golang.org/x/term v0.0.0-20201210144234-2321bbc49cbf // indirect
 	golang.org/x/text v0.3.5 // indirect
 	google.golang.org/genproto v0.0.0-20201019141844-1ed22bb0c154
@@ -80,7 +83,7 @@ require (
 	google.golang.org/protobuf v1.25.0
 	gopkg.in/ini.v1 v1.51.1 // indirect
 	k8s.io/api v0.19.4
-	k8s.io/apimachinery v0.19.4
+	k8s.io/apimachinery v0.21.1
 	k8s.io/client-go v0.19.4
 	k8s.io/utils v0.0.0-20201110183641-67b214c5f920 // indirect
 )

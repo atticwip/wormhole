@@ -8,6 +8,8 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/certusone/wormhole/bridge/pkg/qtum"
+
 	solana_types "github.com/dfuse-io/solana-go"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -55,6 +57,13 @@ var (
 	ethContract      *string
 	ethConfirmations *uint64
 
+	qtumSupport       *bool
+	qtumRPC           *string
+	qtumContract      *string
+	qtumChainID       *string
+	qtumConfirmations *uint64
+	qtumKeyPath       *string
+
 	terraSupport  *bool
 	terraWS       *string
 	terraLCD      *string
@@ -93,6 +102,13 @@ func init() {
 	ethRPC = BridgeCmd.Flags().String("ethRPC", "", "Ethereum RPC URL")
 	ethContract = BridgeCmd.Flags().String("ethContract", "", "Ethereum bridge contract address")
 	ethConfirmations = BridgeCmd.Flags().Uint64("ethConfirmations", 15, "Ethereum confirmation count requirement")
+
+	qtumSupport = BridgeCmd.Flags().Bool("qtum", false, "Turn on support for Qtum")
+	qtumRPC = BridgeCmd.Flags().String("qtumRPC", "", "Qtum RPC URL")
+	qtumContract = BridgeCmd.Flags().String("qtumContract", "", "Qtum bridge contract address")
+	qtumConfirmations = BridgeCmd.Flags().Uint64("qtumConfirmations", 6, "Qtum confirmation count requirement")
+	qtumChainID = BridgeCmd.Flags().String("qtumChainID", "", "Qtum chain ID, used in client")
+	qtumKeyPath = BridgeCmd.Flags().String("qtumKey", "", "Path to wif for account paying gas for submitting transactions to Qtum")
 
 	terraSupport = BridgeCmd.Flags().Bool("terra", false, "Turn on support for Terra")
 	terraWS = BridgeCmd.Flags().String("terraWS", "", "Path to terrad root for websocket connection")
@@ -201,6 +217,10 @@ func runBridge(cmd *cobra.Command, args []string) {
 		readiness.RegisterComponent(common.ReadinessTerraSyncing)
 	}
 
+	if *qtumSupport {
+		readiness.RegisterComponent(common.ReadinessQtumSyncing)
+	}
+
 	if *statusAddr != "" {
 		// Use a custom routing instead of using http.DefaultServeMux directly to avoid accidentally exposing packages
 		// that register themselves with it by default (like pprof).
@@ -270,6 +290,25 @@ func runBridge(cmd *cobra.Command, args []string) {
 	}
 	if *nodeName == "" {
 		logger.Fatal("Please specify --nodeName")
+	}
+
+	if *qtumSupport {
+
+		if *qtumRPC == "" {
+			logger.Fatal("Please specify --qtumRPC")
+		}
+
+		if *qtumContract == "" {
+			logger.Fatal("Please specify --qtumContract")
+		}
+
+		if *qtumKeyPath == "" {
+			logger.Fatal("Please specify --qtumKeyPath")
+		}
+
+		if *qtumChainID == "" {
+			logger.Fatal("Please specify --qtumChainID")
+		}
 	}
 
 	if *solanaBridgeAddress == "" {
@@ -380,6 +419,18 @@ func runBridge(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Load Qtum fee payer key
+	var qtumFeePayer string
+	if *qtumSupport {
+		if *unsafeDevMode {
+			qtum.WriteDevnetKey(*qtumKeyPath)
+		}
+		qtumFeePayer, err = qtum.ReadKey(*qtumKeyPath)
+		if err != nil {
+			logger.Fatal("Failed to load Qtum fee payer key", zap.Error(err))
+		}
+	}
+
 	adminService, err := adminServiceRunnable(logger, *adminSocketPath, injectC)
 	if err != nil {
 		logger.Fatal("failed to create admin service socket", zap.Error(err))
@@ -405,6 +456,14 @@ func runBridge(cmd *cobra.Command, args []string) {
 			logger.Info("Starting Terra watcher")
 			if err := supervisor.Run(ctx, "terrawatch",
 				terra.NewTerraBridgeWatcher(*terraWS, *terraLCD, *terraContract, lockC, setC).Run); err != nil {
+				return err
+			}
+		}
+
+		if *qtumSupport {
+			logger.Info("Starting Qtum watcher")
+			if err := supervisor.Run(ctx, "qtumwatch",
+				qtum.NewQtumBridgeWatcher(*qtumRPC, *qtumContract, *qtumChainID, *qtumConfirmations, lockC, setC).Run); err != nil {
 				return err
 			}
 		}
@@ -436,6 +495,11 @@ func runBridge(cmd *cobra.Command, args []string) {
 			*terraChainID,
 			*terraContract,
 			terraFeePayer,
+			*qtumSupport,
+			*qtumRPC,
+			*qtumChainID,
+			*qtumContract,
+			qtumFeePayer,
 		)
 		if err := supervisor.Run(ctx, "processor", p.Run); err != nil {
 			return err
@@ -443,6 +507,12 @@ func runBridge(cmd *cobra.Command, args []string) {
 
 		if err := supervisor.Run(ctx, "admin", adminService); err != nil {
 			return err
+		}
+		if *publicRPC != "" {
+			if err := supervisor.Run(ctx, "publicrpc",
+				publicrpc.PublicrpcServiceRunnable(logger, *publicRPC, rawHeartbeatListeners)); err != nil {
+				return err
+			}
 		}
 		if *publicRPC != "" {
 			if err := supervisor.Run(ctx, "publicrpc",

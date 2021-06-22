@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"fmt"
+	"github.com/certusone/wormhole/bridge/pkg/qtum"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -81,6 +82,12 @@ type Processor struct {
 	terraContract string
 	terraFeePayer string
 
+	qtumEnabled  bool
+	qtumRPC      string
+	qtumChainID  string
+	qtumContract string
+	qtumFeePayer string
+
 	logger *zap.Logger
 
 	// Runtime state
@@ -111,7 +118,13 @@ func NewProcessor(
 	terraLCD string,
 	terraChainID string,
 	terraContract string,
-	terraFeePayer string) *Processor {
+	terraFeePayer string,
+	qtumEnabled bool,
+	qtumRPC string,
+	qtumChainID string,
+	qtumContract string,
+	qtumFeePayer string,
+) *Processor {
 
 	return &Processor{
 		lockC:              lockC,
@@ -130,6 +143,12 @@ func NewProcessor(
 		terraChainID:  terraChainID,
 		terraContract: terraContract,
 		terraFeePayer: terraFeePayer,
+
+		qtumEnabled:  qtumEnabled,
+		qtumRPC:      qtumRPC,
+		qtumChainID:  qtumChainID,
+		qtumContract: qtumContract,
+		qtumFeePayer: qtumFeePayer,
 
 		logger:  supervisor.Logger(ctx),
 		state:   &aggregationState{vaaMap{}},
@@ -177,6 +196,7 @@ func (p *Processor) checkDevModeGuardianSetUpdate(ctx context.Context) error {
 
 			timeout, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
+
 			trx, err := devnet.SubmitVAA(timeout, p.devnetEthRPC, v)
 			if err != nil {
 				// Either Ethereum is not yet up, or another node has already submitted - bail
@@ -201,6 +221,25 @@ func (p *Processor) checkDevModeGuardianSetUpdate(ctx context.Context) error {
 						}
 						cancel()
 						p.logger.Info("devnet guardian set change submitted to Terra", zap.Any("trxResponse", trxResponse), zap.Any("vaa", v))
+						break
+					}
+				}()
+			}
+
+			if p.qtumEnabled {
+				// Submit to qtum
+				go func() {
+					for {
+						timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+						trxResponse, err := qtum.SubmitVAA(timeout, p.qtumRPC, p.qtumChainID, p.qtumContract, p.qtumFeePayer, v)
+						if err != nil {
+							cancel()
+							p.logger.Error("failed to submit Qtum devnet guardian set change, retrying", zap.Error(err))
+							time.Sleep(1 * time.Second)
+							continue
+						}
+						cancel()
+						p.logger.Info("devnet guardian set change submitted to Qtum", zap.Any("trxResponse", trxResponse), zap.Any("vaa", v))
 						break
 					}
 				}()

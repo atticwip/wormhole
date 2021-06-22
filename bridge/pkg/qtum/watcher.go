@@ -1,77 +1,79 @@
-package ethereum
+package qtum
 
 import (
 	"context"
 	"fmt"
 	"github.com/certusone/wormhole/bridge/pkg/p2p"
 	gossipv1 "github.com/certusone/wormhole/bridge/pkg/proto/gossip/v1"
-	"math/big"
-	"sync"
-	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	eth_common "github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"go.uber.org/zap"
-
-	"github.com/certusone/wormhole/bridge/pkg/common"
-	"github.com/certusone/wormhole/bridge/pkg/ethereum/abi"
 	"github.com/certusone/wormhole/bridge/pkg/readiness"
 	"github.com/certusone/wormhole/bridge/pkg/supervisor"
 	"github.com/certusone/wormhole/bridge/pkg/vaa"
+	"go.uber.org/zap"
+	"math/big"
+	"time"
+
+	"github.com/certusone/wormhole/bridge/pkg/qtum/abi"
+	"github.com/qtumproject/janus/pkg/qtum"
+
+	//gossipv1 "github.com/certusone/wormhole/proto/gossip/v1"
+	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	eth_common "github.com/ethereum/go-ethereum/common"
+
+	"github.com/certusone/wormhole/bridge/pkg/common"
 )
 
 var (
-	ethConnectionErrors = prometheus.NewCounterVec(
+	qtumConnectionErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "wormhole_eth_connection_errors_total",
-			Help: "Total number of Ethereum connection errors (either during initial connection or while watching)",
+			Name: "wormhole_qtum_connection_errors_total",
+			Help: "Total number of Qtum connection errors (either during initial connection or while watching)",
 		}, []string{"reason"})
 
-	ethLockupsFound = prometheus.NewCounter(
+	qtumLockupsFound = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "wormhole_eth_lockups_found_total",
-			Help: "Total number of Eth lockups found (pre-confirmation)",
+			Name: "wormhole_qtum_lockups_found_total",
+			Help: "Total number of Qtum lockups found (pre-confirmation)",
 		})
-	ethLockupsConfirmed = prometheus.NewCounter(
+	qtumLockupsConfirmed = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "wormhole_eth_lockups_confirmed_total",
-			Help: "Total number of Eth lockups verified (post-confirmation)",
+			Name: "wormhole_qtum_lockups_confirmed_total",
+			Help: "Total number of Qtum lockups verified (post-confirmation)",
 		})
 	guardianSetChangesConfirmed = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "wormhole_eth_guardian_set_changes_confirmed_total",
+			Name: "wormhole_qtum_guardian_set_changes_confirmed_total",
 			Help: "Total number of guardian set changes verified (we only see confirmed ones to begin with)",
 		})
-	currentEthHeight = prometheus.NewGauge(
+	currentQtumHeight = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "wormhole_eth_current_height",
-			Help: "Current Ethereum block height",
+			Name: "wormhole_qtum_current_height",
+			Help: "Current Qtum block height",
 		})
 	queryLatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "wormhole_eth_query_latency",
-			Help: "Latency histogram for Ethereum calls (note that most interactions are streaming queries, NOT calls, and we cannot measure latency for those",
+			Name: "wormhole_qtum_query_latency",
+			Help: "Latency histogram for Qtum calls (note that most interactions are streaming queries, NOT calls, and we cannot measure latency for those",
 		}, []string{"operation"})
 )
 
 func init() {
-	prometheus.MustRegister(ethConnectionErrors)
-	prometheus.MustRegister(ethLockupsFound)
-	prometheus.MustRegister(ethLockupsConfirmed)
+	prometheus.MustRegister(qtumConnectionErrors)
+	prometheus.MustRegister(qtumLockupsFound)
+	prometheus.MustRegister(qtumLockupsConfirmed)
 	prometheus.MustRegister(guardianSetChangesConfirmed)
-	prometheus.MustRegister(currentEthHeight)
+	prometheus.MustRegister(currentQtumHeight)
 	prometheus.MustRegister(queryLatency)
 }
 
 type (
-	EthBridgeWatcher struct {
+	QtumBridgeWatcher struct {
 		url              string
-		bridge           eth_common.Address
+		bridge           string
 		minConfirmations uint64
+		chainID          string
 
 		pendingLocks      map[eth_common.Hash]*pendingLock
 		pendingLocksGuard sync.Mutex
@@ -86,67 +88,63 @@ type (
 	}
 )
 
-func NewEthBridgeWatcher(url string, bridge eth_common.Address, minConfirmations uint64, lockEvents chan *common.ChainLock, setEvents chan *common.GuardianSet) *EthBridgeWatcher {
-	return &EthBridgeWatcher{url: url, bridge: bridge, minConfirmations: minConfirmations, lockChan: lockEvents, setChan: setEvents, pendingLocks: map[eth_common.Hash]*pendingLock{}}
+func NewQtumBridgeWatcher(url, bridge, chainID string, minConfirmations uint64, lockEvents chan *common.ChainLock, setEvents chan *common.GuardianSet) *QtumBridgeWatcher {
+	return &QtumBridgeWatcher{url: url, bridge: bridge, chainID: chainID, minConfirmations: minConfirmations, lockChan: lockEvents, setChan: setEvents, pendingLocks: map[eth_common.Hash]*pendingLock{}}
 }
 
-func (e *EthBridgeWatcher) Run(ctx context.Context) error {
+func (e *QtumBridgeWatcher) Run(ctx context.Context) error {
 	// Initialize gossip metrics (we want to broadcast the address even if we're not yet syncing)
-	p2p.DefaultRegistry.SetNetworkStats(vaa.ChainIDEthereum, &gossipv1.Heartbeat_Network{
-		BridgeAddress: e.bridge.Hex(),
+	p2p.DefaultRegistry.SetNetworkStats(vaa.ChainIDQtum, &gossipv1.Heartbeat_Network{
+		BridgeAddress: e.bridge,
 	})
 
-	timeout, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	c, err := ethclient.DialContext(timeout, e.url)
+	filterer, err := abi.NewFilterer(e.url, e.chainID, e.minConfirmations)
 	if err != nil {
-		ethConnectionErrors.WithLabelValues("dial_error").Inc()
-		return fmt.Errorf("dialing eth client failed: %w", err)
+		return err
 	}
 
-	f, err := abi.NewAbiFilterer(e.bridge, c)
+	qtumABI, err := abi.NewAbiQtum(e.url, e.bridge, e.chainID, filterer)
 	if err != nil {
-		return fmt.Errorf("could not create wormhole bridge filter: %w", err)
-	}
-
-	caller, err := abi.NewAbiCaller(e.bridge, c)
-	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// Timeout for initializing subscriptions
-	timeout, cancel = context.WithTimeout(ctx, 15*time.Second)
+	timeout, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	// Subscribe to new token lockups
 	tokensLockedC := make(chan *abi.AbiLogTokensLocked, 2)
-	tokensLockedSub, err := f.WatchLogTokensLocked(&bind.WatchOpts{Context: timeout}, tokensLockedC, nil, nil)
+
+	tokensLockedSub, err := qtumABI.WatchLogTokensLocked(timeout, tokensLockedC)
 	if err != nil {
-		ethConnectionErrors.WithLabelValues("subscribe_error").Inc()
+		qtumConnectionErrors.WithLabelValues("subscribe_error").Inc()
 		return fmt.Errorf("failed to subscribe to token lockup events: %w", err)
 	}
 
 	// Subscribe to guardian set changes
 	guardianSetC := make(chan *abi.AbiLogGuardianSetChanged, 2)
-	guardianSetEvent, err := f.WatchLogGuardianSetChanged(&bind.WatchOpts{Context: timeout}, guardianSetC)
+
+	guardianSetEvent, err := qtumABI.WatchLogGuardianSetChanged(timeout, guardianSetC)
 	if err != nil {
-		ethConnectionErrors.WithLabelValues("subscribe_error").Inc()
+		qtumConnectionErrors.WithLabelValues("subscribe_error").Inc()
 		return fmt.Errorf("failed to subscribe to guardian set events: %w", err)
 	}
 
 	errC := make(chan error)
 	logger := supervisor.Logger(ctx)
 
-	// Get initial validator set from Ethereum. We could also fetch it from Solana,
-	// because both sets are synchronized, we simply made an arbitrary decision to use Ethereum.
+	// Get initial validator set from Qtum. We could also fetch it from Solana,
+	// because both sets are synchronized, we simply made an arbitrary decision to use Qtum.
 	timeout, cancel = context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	idx, gs, err := FetchCurrentGuardianSet(timeout, e.url, e.bridge)
+
+	idx, gs, err := FetchCurrentGuardianSet(timeout, e.url, e.chainID, e.bridge)
 	if err != nil {
-		ethConnectionErrors.WithLabelValues("guardian_set_fetch_error").Inc()
-		return fmt.Errorf("failed requesting guardian set from Ethereum: %w", err)
+		qtumConnectionErrors.WithLabelValues("guardian_set_fetch_error").Inc()
+		return fmt.Errorf("failed requesting guardian set from Qtum: %w", err)
 	}
-	logger.Info("initial guardian set fetched", zap.Any("value", gs), zap.Uint32("index", idx))
+
+	logger.Info("qtum initial guardian set fetched", zap.Any("value", gs), zap.Uint32("index", idx))
 	e.setChan <- &common.GuardianSet{
 		Keys:  gs.Keys,
 		Index: idx,
@@ -158,34 +156,34 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case e := <-tokensLockedSub.Err():
-				ethConnectionErrors.WithLabelValues("subscription_error").Inc()
+				qtumConnectionErrors.WithLabelValues("subscription_error").Inc()
 				errC <- fmt.Errorf("error while processing token lockup subscription: %w", e)
 				return
 			case e := <-guardianSetEvent.Err():
-				ethConnectionErrors.WithLabelValues("subscription_error").Inc()
+				qtumConnectionErrors.WithLabelValues("subscription_error").Inc()
 				errC <- fmt.Errorf("error while processing guardian set subscription: %w", e)
 				return
 			case ev := <-tokensLockedC:
 				// Request timestamp for block
 				msm := time.Now()
 				timeout, cancel = context.WithTimeout(ctx, 15*time.Second)
-				b, err := c.BlockByNumber(timeout, big.NewInt(int64(ev.Raw.BlockNumber)))
+				b, err := BlockByNumber(e.url, e.chainID, big.NewInt(int64(ev.Raw.BlockNumber)))
 				cancel()
 				queryLatency.WithLabelValues("block_by_number").Observe(time.Since(msm).Seconds())
 
 				if err != nil {
-					ethConnectionErrors.WithLabelValues("block_by_number_error").Inc()
+					qtumConnectionErrors.WithLabelValues("block_by_number_error").Inc()
 					errC <- fmt.Errorf("failed to request timestamp for block %d: %w", ev.Raw.BlockNumber, err)
 					return
 				}
 
 				lock := &common.ChainLock{
 					TxHash:        ev.Raw.TxHash,
-					Timestamp:     time.Unix(int64(b.Time()), 0),
+					Timestamp:     time.Unix(int64(b.Time), 0),
 					Nonce:         ev.Nonce,
 					SourceAddress: ev.Sender,
 					TargetAddress: ev.Recipient,
-					SourceChain:   vaa.ChainIDEthereum,
+					SourceChain:   vaa.ChainIDQtum,
 					TargetChain:   vaa.ChainID(ev.TargetChain),
 					TokenChain:    vaa.ChainID(ev.TokenChain),
 					TokenAddress:  ev.Token,
@@ -196,7 +194,7 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 				logger.Info("found new lockup transaction", zap.Stringer("tx", ev.Raw.TxHash),
 					zap.Uint64("block", ev.Raw.BlockNumber))
 
-				ethLockupsFound.Inc()
+				qtumLockupsFound.Inc()
 
 				e.pendingLocksGuard.Lock()
 				e.pendingLocks[ev.Raw.TxHash] = &pendingLock{
@@ -212,7 +210,7 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 
 				msm := time.Now()
 				timeout, cancel = context.WithTimeout(ctx, 15*time.Second)
-				gs, err := caller.GetGuardianSet(&bind.CallOpts{Context: timeout}, ev.NewGuardianIndex)
+				gs, err := qtumABI.GetGuardianSet(ev.NewGuardianIndex)
 				cancel()
 				queryLatency.WithLabelValues("get_guardian_set").Observe(time.Since(msm).Seconds())
 				if err != nil {
@@ -232,9 +230,9 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 	}()
 
 	// Watch headers
-	headSink := make(chan *types.Header, 2)
+	headSink := make(chan *qtum.GetBlockHeaderResponse, 2)
 
-	headerSubscription, err := c.SubscribeNewHead(ctx, headSink)
+	headerSubscription, err := SubscribeNewHead(e.url, e.chainID, e.minConfirmations, ctx, headSink)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to header events: %w", err)
 	}
@@ -249,39 +247,39 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 				return
 			case ev := <-headSink:
 				start := time.Now()
-				logger.Info("processing new header", zap.Stringer("block", ev.Number))
-				currentEthHeight.Set(float64(ev.Number.Int64()))
-				readiness.SetReady(common.ReadinessEthSyncing)
-				p2p.DefaultRegistry.SetNetworkStats(vaa.ChainIDEthereum, &gossipv1.Heartbeat_Network{
-					Height:        ev.Number.Int64(),
-					BridgeAddress: e.bridge.Hex(),
+				logger.Info("processing new header", zap.Int("block", ev.Height))
+				currentQtumHeight.Set(float64(ev.Height))
+				readiness.SetReady(common.ReadinessQtumSyncing)
+				p2p.DefaultRegistry.SetNetworkStats(vaa.ChainIDQtum, &gossipv1.Heartbeat_Network{
+					Height:        int64(ev.Height),
+					BridgeAddress: e.bridge,
 				})
 
 				e.pendingLocksGuard.Lock()
 
-				blockNumberU := ev.Number.Uint64()
+				blockNumberU := uint64(ev.Height)
 				for hash, pLock := range e.pendingLocks {
 
 					// Transaction was dropped and never picked up again
 					if pLock.height+4*e.minConfirmations <= blockNumberU {
 						logger.Debug("lockup timed out", zap.Stringer("tx", pLock.lock.TxHash),
-							zap.Stringer("block", ev.Number))
+							zap.Int("block", ev.Height))
 						delete(e.pendingLocks, hash)
 						continue
 					}
 
 					// Transaction is now ready
-					if pLock.height+e.minConfirmations <= ev.Number.Uint64() {
+					if pLock.height+e.minConfirmations <= uint64(ev.Height) {
 						logger.Debug("lockup confirmed", zap.Stringer("tx", pLock.lock.TxHash),
-							zap.Stringer("block", ev.Number))
+							zap.Int("block", ev.Height))
 						delete(e.pendingLocks, hash)
 						e.lockChan <- pLock.lock
-						ethLockupsConfirmed.Inc()
+						qtumLockupsConfirmed.Inc()
 					}
 				}
 
 				e.pendingLocksGuard.Unlock()
-				logger.Info("processed new header", zap.Stringer("block", ev.Number),
+				logger.Info("processed new header", zap.Int("block", ev.Height),
 					zap.Duration("took", time.Since(start)))
 			}
 		}
@@ -296,28 +294,22 @@ func (e *EthBridgeWatcher) Run(ctx context.Context) error {
 }
 
 // Fetch the current guardian set ID and guardian set from the chain.
-func FetchCurrentGuardianSet(ctx context.Context, rpcURL string, bridgeContract eth_common.Address) (uint32, *abi.WormholeGuardianSet, error) {
-	c, err := ethclient.DialContext(ctx, rpcURL)
+func FetchCurrentGuardianSet(ctx context.Context, rpcURL, chainID, bridgeContract string) (uint32, *abi.WormholeGuardianSet, error) {
+
+	abiQtum, err := abi.NewAbiQtum(rpcURL, bridgeContract, chainID, nil)
 	if err != nil {
-		return 0, nil, fmt.Errorf("dialing eth client failed: %w", err)
+		return 0, nil, fmt.Errorf("dialing qtum client failed: %w", err)
 	}
 
-	caller, err := abi.NewAbiCaller(bridgeContract, c)
-	if err != nil {
-		panic(err)
-	}
-
-	opts := &bind.CallOpts{Context: ctx}
-
-	currentIndex, err := caller.GuardianSetIndex(opts)
+	currentIndex, err := abiQtum.GuardianSetIndex()
 	if err != nil {
 		return 0, nil, fmt.Errorf("error requesting current guardian set index: %w", err)
 	}
 
-	gs, err := caller.GetGuardianSet(opts, currentIndex)
+	gs, err := abiQtum.GetGuardianSet(currentIndex)
 	if err != nil {
 		return 0, nil, fmt.Errorf("error requesting current guardian set value: %w", err)
 	}
 
-	return currentIndex, &gs, nil
+	return currentIndex, gs, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 
@@ -146,4 +147,41 @@ func executeCommandInPod(ctx context.Context, c *kubernetes.Clientset, podName s
 	}
 
 	return execOut.Bytes(), nil
+}
+
+func getPodLogs(c *kubernetes.Clientset, podName, containerName string) (string, error) {
+	p, err := c.CoreV1().Pods(TiltDefaultNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod %s: %w", p, err)
+	}
+
+	podLogOpts := corev1.PodLogOptions{
+		Container: containerName,
+	}
+
+	config, err := getk8sConfig()
+	if err != nil {
+		return "", fmt.Errorf("failed to get config: %s", err)
+	}
+	// creates the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("error in getting access to K8S")
+	}
+	req := clientset.CoreV1().Pods(p.Namespace).GetLogs(p.Name, &podLogOpts)
+	podLogs, err := req.Stream(context.Background())
+	if err != nil {
+
+		return "", fmt.Errorf("error in opening stream %s: %w", p, err)
+	}
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		return "", fmt.Errorf("error in copy information from podLogs to buf")
+	}
+	str := buf.String()
+
+	return str, nil
 }

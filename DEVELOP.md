@@ -56,7 +56,11 @@ Restart a specific pod:
 Generate test Ethereum -> Solana transfers once the cluster is up:
 
     scripts/send-eth-lockups.sh
+    
+Generate test Qtum -> Ethereum transfers:
 
+    scripts/send-qtum-lockups.sh.sh
+    
 Generate test Solana -> Ethereum transfers:
 
     scripts/send-solana-lockups.sh

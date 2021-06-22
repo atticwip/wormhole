@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"context"
+	"github.com/ethereum/go-ethereum/common"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +35,8 @@ func setup(t *testing.T) (*kubernetes.Clientset, *ethclient.Client, *bind.Transa
 		"terra-lcd-0",
 
 		"eth-devnet-0",
+
+		"qtum-devnet-0",
 	}
 
 	c := getk8sClient()
@@ -259,4 +263,83 @@ func TestEndToEnd_ETH_Terra(t *testing.T) {
 			9,
 		)
 	})
+}
+
+func TestEndToEnd_QTUM_ETH(t *testing.T) {
+	c, eClient, _, _ := setup(t)
+
+	qtumQthClient, err := ethclient.Dial(devnet.QtumJanusRPCURL)
+	if err != nil {
+		t.Fatalf("dialing devnet eth rpc failed: %v", err)
+	}
+
+	rpcURL := "http://qtum:testpasswd@localhost:3889"
+	wif := "cMbgxCJrTYUqgcmiC1berh5DFrtY1KeU4PXZ6NZxgenniF1mXCRk"
+
+	logs, err := getPodLogs(c, "qtum-devnet-0", "tests")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	lIND := strings.LastIndex(logs, "Token")
+	tokenAddress := logs[lIND+9 : lIND+49]
+
+	lIND = strings.LastIndex(logs, "Wormhole")
+	bridgeContract := logs[lIND+12 : lIND+52]
+
+	assetID := buildAssetID(common.HexToAddress(tokenAddress), vaa.ChainIDQtum)
+
+	t.Run("[Qtum] Native -> [ETH] Wrapped", func(t *testing.T) {
+		testQtumLockup(
+			t,
+			context.Background(),
+			rpcURL,
+			qtumQthClient,
+			eClient,
+			wif,
+			bridgeContract,
+			assetID,
+			false,
+			true,
+			// Source QRC20 token
+			common.HexToAddress(tokenAddress),
+			// Empty address because destination token is wrapped on Ethereum
+			common.HexToAddress(""),
+			// Amount (the reverse of what the previous test did, with the same precision because
+			// the wrapped ERC20 is set to the original asset's 10**9 precision).
+			// Amount
+			1000000005,
+			// No precision loss
+			-9,
+		)
+	})
+
+	assetID = buildAssetID(devnet.GanacheExampleERC20Token, vaa.ChainIDEthereum)
+	//Should be used after send-lockup-qtum
+	t.Run("[Qtum] Wrapped -> [ETH] Native", func(t *testing.T) {
+		testQtumLockup(
+			t,
+			context.Background(),
+			rpcURL,
+			qtumQthClient,
+			eClient,
+			wif,
+			bridgeContract,
+			assetID,
+			true,
+			false,
+			// Source wrapped QRC20 token
+			common.HexToAddress(""),
+			// Our wrapped destination token on Ethereum
+			devnet.GanacheExampleERC20Token,
+			// Amount (the reverse of what the previous test did, with the same precision because
+			// the wrapped ERC20 is set to the original asset's 10**9 precision).
+			// Amount
+			1,
+			// Precision
+			9,
+		)
+	})
+
 }
